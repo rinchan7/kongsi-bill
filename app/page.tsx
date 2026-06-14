@@ -16,14 +16,13 @@ interface BillData {
   qrCode: string
 }
 
-async function compressQRCode(file: File): Promise<{ dataUrl: string; sizeKb: number }> {
+async function compressQRCode(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const objectUrl = URL.createObjectURL(file)
 
     img.onload = () => {
-      // Aggressive compression: QR codes stay scannable even at low quality
-      const MAX_SIZE = 200
+      const MAX_SIZE = 400
       let { width, height } = img
       if (width > MAX_SIZE || height > MAX_SIZE) {
         const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height)
@@ -35,10 +34,9 @@ async function compressQRCode(file: File): Promise<{ dataUrl: string; sizeKb: nu
       canvas.height = height
       const ctx = canvas.getContext('2d')!
       ctx.drawImage(img, 0, 0, width, height)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.45)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
       URL.revokeObjectURL(objectUrl)
-      const sizeKb = Math.round((dataUrl.length * 3) / 4 / 1024)
-      resolve({ dataUrl, sizeKb })
+      resolve(dataUrl)
     }
 
     img.onerror = () => {
@@ -48,6 +46,17 @@ async function compressQRCode(file: File): Promise<{ dataUrl: string; sizeKb: nu
 
     img.src = objectUrl
   })
+}
+
+async function uploadQR(dataUrl: string): Promise<string> {
+  const res = await fetch('/api/upload-qr', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: dataUrl }),
+  })
+  if (!res.ok) throw new Error('Failed to upload QR')
+  const { url } = await res.json()
+  return url
 }
 
 function encodeBillData(data: BillData): string {
@@ -64,11 +73,13 @@ export default function PayerPage() {
   const [items, setItems] = useState<Item[]>([{ name: '', price: '' }])
   const [serviceChargeRate, setServiceChargeRate] = useState(10)
   const [sstRate, setSstRate] = useState(6)
-  const [qrCode, setQrCode] = useState('')
+  const [qrPreview, setQrPreview] = useState('')   // local preview only
+  const [qrDataUrl, setQrDataUrl] = useState('')   // compressed, ready to upload
   const [qrFileName, setQrFileName] = useState('')
-  const [qrSizeKb, setQrSizeKb] = useState(0)
+  const [qrUploading, setQrUploading] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   const [generatedUrl, setGeneratedUrl] = useState('')
+  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -87,13 +98,17 @@ export default function PayerPage() {
   async function handleQrUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    setError('')
+    setQrUploading(true)
     try {
-      const { dataUrl, sizeKb } = await compressQRCode(file)
-      setQrCode(dataUrl)
-      setQrSizeKb(sizeKb)
+      const dataUrl = await compressQRCode(file)
+      setQrPreview(dataUrl)
+      setQrDataUrl(dataUrl)
       setQrFileName(file.name)
     } catch {
       setError('Failed to process QR image. Please try another file.')
+    } finally {
+      setQrUploading(false)
     }
   }
 
@@ -106,28 +121,40 @@ export default function PayerPage() {
     if (validItems.length === 0) { setError('Please add at least one item with a name and price.'); return }
     if (!payerName.trim()) { setError('Please enter your name so guests know who to pay.'); return }
 
-    const billData: BillData = {
-      billName: billName.trim(),
-      payerName: payerName.trim(),
-      items: validItems.map(i => ({
-        name: i.name.trim(),
-        price: parseFloat(i.price.replace(',', '.')) || 0,
-      })),
-      serviceChargeRate,
-      sstRate,
-      qrCode,
-    }
-
-    const encoded = encodeBillData(billData)
-    const url = `${window.location.origin}/split?d=${encoded}`
-    setGeneratedUrl(url)
-
+    setGenerating(true)
     try {
-      await navigator.clipboard.writeText(url)
-      setLinkCopied(true)
-      setTimeout(() => setLinkCopied(false), 3000)
+      let qrCode = ''
+      if (qrDataUrl) {
+        qrCode = await uploadQR(qrDataUrl)
+      }
+
+      const billData: BillData = {
+        billName: billName.trim(),
+        payerName: payerName.trim(),
+        items: validItems.map(i => ({
+          name: i.name.trim(),
+          price: parseFloat(i.price.replace(',', '.')) || 0,
+        })),
+        serviceChargeRate,
+        sstRate,
+        qrCode,
+      }
+
+      const encoded = encodeBillData(billData)
+      const url = `${window.location.origin}/split?d=${encoded}`
+      setGeneratedUrl(url)
+
+      try {
+        await navigator.clipboard.writeText(url)
+        setLinkCopied(true)
+        setTimeout(() => setLinkCopied(false), 3000)
+      } catch {
+        // fallback: show URL in box
+      }
     } catch {
-      // show fallback textarea
+      setError('Failed to upload QR. Please try again.')
+    } finally {
+      setGenerating(false)
     }
   }
 
@@ -242,7 +269,6 @@ export default function PayerPage() {
             onChange={e => setPayerName(e.target.value)}
           />
 
-          {/* QR Upload — stays on payer's device only */}
           <input
             ref={fileInputRef}
             type="file"
@@ -254,23 +280,23 @@ export default function PayerPage() {
             onClick={() => fileInputRef.current?.click()}
             className="w-full border border-dashed border-border rounded-xl py-4 text-text-secondary text-[14px] hover:border-accent hover:text-accent transition-colors"
           >
-            {qrFileName
-              ? <span className="text-accent">✓ {qrFileName}</span>
-              : '↑ Upload your QR code (DuitNow / TNG)'}
+            {qrUploading
+              ? 'Processing...'
+              : qrFileName
+                ? <span className="text-accent">✓ {qrFileName}</span>
+                : '↑ Upload your QR code (DuitNow / TNG)'}
           </button>
-          {qrCode && (
+          {qrPreview && (
             <div className="mt-3 flex items-start gap-3 bg-bg rounded-xl p-3 border border-border">
               <img
-                src={qrCode}
+                src={qrPreview}
                 alt="Your QR code"
                 className="w-[80px] h-[80px] object-contain rounded-lg bg-white p-1 shrink-0"
               />
               <div>
                 <p className="text-text-primary text-[13px] font-medium">QR ready</p>
                 <p className="text-text-muted text-[12px] mt-1">
-                  {qrSizeKb > 30
-                    ? 'Large image — QR included in link but guests should screenshot it'
-                    : 'Guests will see this QR in the shared link and can screenshot to pay'}
+                  Will be uploaded when you generate the link. Guests can screenshot to pay.
                 </p>
               </div>
             </div>
@@ -285,9 +311,10 @@ export default function PayerPage() {
         {/* Generate Link */}
         <button
           onClick={handleGenerateLink}
-          className="w-full bg-accent text-text-on-accent font-semibold rounded-2xl py-4 text-[16px] mb-4 transition-opacity active:opacity-80"
+          disabled={generating}
+          className="w-full bg-accent text-text-on-accent font-semibold rounded-2xl py-4 text-[16px] mb-4 transition-opacity active:opacity-80 disabled:opacity-60"
         >
-          {linkCopied ? '✓ Link Copied!' : 'Generate Shareable Link'}
+          {generating ? 'Uploading QR & generating...' : linkCopied ? '✓ Link Copied!' : 'Generate Shareable Link'}
         </button>
 
         {/* Link Result */}
@@ -312,15 +339,15 @@ export default function PayerPage() {
           </div>
         )}
 
-        {linkGenerated && qrCode && (
+        {linkGenerated && qrPreview && (
           <div className="bg-surface border border-border rounded-2xl p-5 mb-4 text-center">
-            <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-3">Show to guests after they pay</p>
+            <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-3">Your QR code</p>
             <img
-              src={qrCode}
+              src={qrPreview}
               alt="Your payment QR"
               className="w-[180px] h-[180px] object-contain mx-auto rounded-xl bg-white p-2 mb-3"
             />
-            <p className="text-text-secondary text-[13px]">Scan to pay {payerName || 'you'}</p>
+            <p className="text-text-secondary text-[13px]">Guests will see this in the link</p>
           </div>
         )}
 
