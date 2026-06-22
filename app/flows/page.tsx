@@ -367,7 +367,7 @@ function Screen4({ t }: { t: T }) {
       <Card t={t}>
         <p style={{ fontSize: 12, color: t.textSecondary, margin: '0 0 8px' }}>✓ Copied! Send this to your group:</p>
         <div style={{ background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: '8px 10px', marginBottom: 8 }}>
-          <p style={{ fontSize: 10, color: t.textMuted, margin: 0, wordBreak: 'break-all' }}>kongsi-bill.vercel.app/split?d=eyJiaWxsTmFtZSI6Ikp...</p>
+          <p style={{ fontSize: 10, color: t.textMuted, margin: 0 }}>kongsi-bill.vercel.app/split?id=x7k2mq</p>
         </div>
         <div style={{ border: `1px solid ${t.accent}`, borderRadius: 10, padding: '9px', textAlign: 'center', fontSize: 12, fontWeight: 500, color: t.accent }}>
           Copy Link
@@ -499,8 +499,23 @@ function Screen7({ t }: { t: T }) {
         <span style={{ fontSize: 56 }}>🙏</span>
       </div>
       <p style={{ fontSize: 20, fontWeight: 700, color: '#ffffff', textAlign: 'center', margin: '0 0 6px' }}>T.HANKS! 🙏</p>
-      <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', textAlign: 'center', margin: '0 0 40px' }}>That&apos;s what legends do.</p>
-      <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Tap anywhere to close</p>
+      <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', textAlign: 'center', margin: '0 0 20px' }}>That&apos;s what legends do.</p>
+
+      {/* Feedback UI */}
+      <div style={{ width: '100%', maxWidth: 240 }}>
+        <p style={{ fontSize: 12, color: '#666', textAlign: 'center', margin: '0 0 12px' }}>How was your experience?</p>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginBottom: 12 }}>
+          {['😕', '😊', '🤩'].map((emoji, i) => (
+            <span key={emoji} style={{ fontSize: 30, opacity: i === 2 ? 1 : 0.35, transform: i === 2 ? 'scale(1.3)' : 'scale(1)', display: 'inline-block' }}>{emoji}</span>
+          ))}
+        </div>
+        <div style={{ background: '#1a1a22', border: '1px solid #2a2a35', borderRadius: 10, padding: '8px 10px', marginBottom: 8 }}>
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Anything to improve? (optional)</p>
+        </div>
+        <div style={{ background: '#00d094', borderRadius: 10, padding: '9px', textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#000' }}>
+          Send feedback
+        </div>
+      </div>
     </div>
   )
 }
