@@ -88,6 +88,40 @@ function SplitPageContent() {
   const [currentMeme, setCurrentMeme] = useState(THANK_YOU_MEMES[0])
   const pendingMemeRef = useRef(false)
 
+  const [feedbackRating, setFeedbackRating] = useState<string | null>(null)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false)
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (showMeme) {
+      setFeedbackRating(null)
+      setFeedbackComment('')
+      setFeedbackSubmitted(false)
+    }
+  }, [showMeme])
+
+  async function handleFeedbackSubmit() {
+    if (!feedbackRating) return
+    setFeedbackSubmitting(true)
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: feedbackRating,
+          comment: feedbackComment.trim() || undefined,
+          billName: billData?.billName,
+        }),
+      })
+    } catch {
+      // fail silently — feedback is best-effort
+    }
+    setFeedbackSubmitting(false)
+    setFeedbackSubmitted(true)
+    setTimeout(() => setShowMeme(false), 1500)
+  }
+
   useEffect(() => {
     function handleVisibility() {
       if (document.visibilityState === 'visible' && pendingMemeRef.current) {
@@ -195,9 +229,9 @@ function SplitPageContent() {
       {/* Meme overlay — appears when user returns from WhatsApp */}
       {showMeme && (
         <div
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 overflow-y-auto"
           style={{ background: 'rgba(10,10,15,0.96)' }}
-          onClick={() => setShowMeme(false)}
+          onClick={() => { if (!feedbackRating || feedbackSubmitted) setShowMeme(false) }}
         >
           <p className="text-[11px] tracking-[2px] uppercase text-text-muted mb-5">Terima kasih!</p>
           <img
@@ -206,7 +240,62 @@ function SplitPageContent() {
             className="w-full max-w-[300px] rounded-2xl"
           />
           <p className="text-white text-[20px] font-bold mt-5 text-center">{currentMeme.caption}</p>
-          <p className="text-text-muted text-[12px] mt-8">Tap anywhere to close</p>
+
+          {/* Feedback */}
+          <div
+            className="mt-8 w-full max-w-[300px]"
+            onClick={e => e.stopPropagation()}
+          >
+            {!feedbackSubmitted ? (
+              <>
+                <p className="text-text-muted text-[12px] text-center mb-4">
+                  How was your experience?
+                </p>
+                <div className="flex justify-center gap-5 mb-4">
+                  {(['😕', '😊', '🤩'] as const).map(emoji => (
+                    <button
+                      key={emoji}
+                      onClick={() => setFeedbackRating(emoji)}
+                      className="text-[34px] transition-all duration-150"
+                      style={{
+                        transform: feedbackRating === emoji ? 'scale(1.3)' : 'scale(1)',
+                        opacity: feedbackRating && feedbackRating !== emoji ? 0.35 : 1,
+                      }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+
+                {feedbackRating && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={feedbackComment}
+                      onChange={e => setFeedbackComment(e.target.value)}
+                      placeholder="Anything to improve? (optional)"
+                      rows={2}
+                      className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-text-primary placeholder:text-text-muted text-[13px] resize-none focus:outline-none focus:border-accent transition-colors"
+                    />
+                    <button
+                      onClick={handleFeedbackSubmit}
+                      disabled={feedbackSubmitting}
+                      className="w-full bg-accent text-text-on-accent font-semibold rounded-xl py-2.5 text-[14px] disabled:opacity-60 transition-opacity"
+                    >
+                      {feedbackSubmitting ? 'Sending...' : 'Send feedback'}
+                    </button>
+                  </div>
+                )}
+
+                {!feedbackRating && (
+                  <p className="text-text-muted text-[12px] text-center mt-2">Tap anywhere to close</p>
+                )}
+              </>
+            ) : (
+              <div className="text-center">
+                <p className="text-accent text-[15px] font-semibold">Thanks for your feedback! 🙏</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
