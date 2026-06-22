@@ -79,13 +79,6 @@ async function uploadReceipt(dataUrl: string): Promise<string> {
   return url
 }
 
-function encodeBillData(data: BillData): string {
-  const json = JSON.stringify(data)
-  return btoa(unescape(encodeURIComponent(json)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-}
 
 function fmt(n: number): string {
   return n.toFixed(2)
@@ -197,8 +190,15 @@ export default function PayerPage() {
         receiptUrl,
       }
 
-      const encoded = encodeBillData(billData)
-      const url = `${window.location.origin}/split?d=${encoded}`
+      const res = await fetch('/api/create-bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(billData),
+      })
+      if (!res.ok) throw new Error('Failed to create bill')
+      const { id } = await res.json()
+
+      const url = `${window.location.origin}/split?id=${id}`
       setGeneratedUrl(url)
 
       try {

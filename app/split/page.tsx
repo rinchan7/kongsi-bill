@@ -76,12 +76,22 @@ function fmt(n: number): string {
 
 function SplitPageContent() {
   const searchParams = useSearchParams()
+  const id = searchParams.get('id')
   const encoded = searchParams.get('d')
 
-  const billData = useMemo((): BillData | null => {
-    if (!encoded) return null
-    return decodeBillData(encoded)
-  }, [encoded])
+  // Legacy ?d= links decode synchronously; new ?id= links fetch from server
+  const [billData, setBillData] = useState<BillData | null>(
+    encoded ? decodeBillData(encoded) : null
+  )
+  const [loading, setLoading] = useState(!!id)
+
+  useEffect(() => {
+    if (!id) return
+    fetch(`/api/get-bill?id=${id}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { setBillData(data); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [id])
 
   const [selectedItems, setSelectedItems] = useState<Map<number, number>>(new Map())
   const [showMeme, setShowMeme] = useState(false)
@@ -209,6 +219,14 @@ function SplitPageContent() {
   const animatedSubtotal = useAnimatedValue(subtotal)
   const animatedSC = useAnimatedValue(serviceCharge)
   const animatedSST = useAnimatedValue(sst)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <p className="text-text-secondary text-[14px]">Loading bill...</p>
+      </div>
+    )
+  }
 
   if (!billData) {
     return (
