@@ -6,11 +6,21 @@ import { useSearchParams } from 'next/navigation'
 interface BillData {
   billName: string
   payerName: string
-  items: { name: string; price: number }[]
+  payerPhone?: string
+  items: { name: string; price: number; qty?: number }[]
   serviceChargeRate: number
   sstRate: number
   qrCode: string
+  receiptUrl?: string
 }
+
+const THANK_YOU_MEMES = [
+  { id: 'KJ1f5iTl4Oo7u', caption: 'T.HANKS! 🙏' },
+  { id: '1Z02vuppxP1Pa', caption: "That's what legends do." },
+  { id: 'AeWoyE3ZT90YM', caption: 'Respect. 🫡' },
+  { id: 'BYoRqTmcgzHcL9TCy1', caption: "You're the GOAT. 🐐" },
+  { id: 'uWlpPGquhGZNFzY90z', caption: 'Good human. 🐾' },
+]
 
 function decodeBillData(encoded: string): BillData | null {
   try {
@@ -23,6 +33,13 @@ function decodeBillData(encoded: string): BillData | null {
   }
 }
 
+function formatMalaysianPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.startsWith('60')) return digits
+  if (digits.startsWith('0')) return '60' + digits.slice(1)
+  return '60' + digits
+}
+
 function useAnimatedValue(target: number, duration = 900) {
   const [displayed, setDisplayed] = useState(target)
   const prevRef = useRef(target)
@@ -32,11 +49,8 @@ function useAnimatedValue(target: number, duration = 900) {
     const start = prevRef.current
     const end = target
     if (start === end) return
-
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
-
     const startTime = performance.now()
-
     function animate(now: number) {
       const elapsed = now - startTime
       const progress = Math.min(elapsed / duration, 1)
@@ -49,7 +63,6 @@ function useAnimatedValue(target: number, duration = 900) {
         setDisplayed(end)
       }
     }
-
     rafRef.current = requestAnimationFrame(animate)
     return () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current) }
   }, [target, duration])
@@ -70,23 +83,81 @@ function SplitPageContent() {
     return decodeBillData(encoded)
   }, [encoded])
 
-  const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set())
+  const [selectedItems, setSelectedItems] = useState<Map<number, number>>(new Map())
+  const [showMeme, setShowMeme] = useState(false)
+  const [currentMeme, setCurrentMeme] = useState(THANK_YOU_MEMES[0])
+  const pendingMemeRef = useRef(false)
 
-  function toggleItem(idx: number) {
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === 'visible' && pendingMemeRef.current) {
+        pendingMemeRef.current = false
+        setShowMeme(true)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
+
+  function adjustQty(idx: number, newQty: number) {
     setSelectedItems(prev => {
-      const next = new Set(prev)
-      if (next.has(idx)) {
+      const next = new Map(prev)
+      if (newQty <= 0) {
         next.delete(idx)
       } else {
-        next.add(idx)
+        next.set(idx, newQty)
       }
       return next
     })
   }
 
+  async function downloadQR() {
+    if (!billData?.qrCode) return
+    try {
+      const res = await fetch(billData.qrCode)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `${billData.payerName}-QR.jpg`
+      a.click()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      window.open(billData.qrCode, '_blank')
+    }
+  }
+
+  function handleDahBayar() {
+    if (!billData) return
+
+    const meme = THANK_YOU_MEMES[Math.floor(Math.random() * THANK_YOU_MEMES.length)]
+    setCurrentMeme(meme)
+
+    const lines: string[] = [`Hi ${billData.payerName}! 🙏 Dah bayar untuk *${billData.billName}*\n`]
+    Array.from(selectedItems.entries()).forEach(([idx, qty]) => {
+      const item = billData.items[idx]
+      if (!item) return
+      const itemTotal = item.price * qty
+      lines.push(`${item.name}${qty > 1 ? ` × ${qty}` : ''} — RM ${fmt(itemTotal)}`)
+    })
+    if (selectedItems.size > 0) {
+      lines.push(`\n*Total: RM ${fmt(grandTotal)}*`)
+    }
+    lines.push(`\n_Sent via Kongsi Bill_`)
+
+    const message = lines.join('\n')
+    const phone = billData.payerPhone ? formatMalaysianPhone(billData.payerPhone) : ''
+    const waUrl = phone
+      ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`
+
+    pendingMemeRef.current = true
+    window.location.href = waUrl
+  }
+
   const subtotal = useMemo(() => {
-    return Array.from(selectedItems).reduce((sum, idx) => {
-      return sum + (billData?.items[idx]?.price ?? 0)
+    return Array.from(selectedItems.entries()).reduce((sum, [idx, qty]) => {
+      return sum + (billData?.items[idx]?.price ?? 0) * qty
     }, 0)
   }, [selectedItems, billData])
 
@@ -117,115 +188,182 @@ function SplitPageContent() {
     )
   }
 
+  const stepperBtn = 'w-9 h-9 rounded-full border flex items-center justify-center text-[18px] leading-none transition-colors active:opacity-70 shrink-0'
+
   return (
-    <div className="mx-auto max-w-[430px]">
+    <>
+      {/* Meme overlay — appears when user returns from WhatsApp */}
+      {showMeme && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6"
+          style={{ background: 'rgba(10,10,15,0.96)' }}
+          onClick={() => setShowMeme(false)}
+        >
+          <p className="text-[11px] tracking-[2px] uppercase text-text-muted mb-5">Terima kasih!</p>
+          <img
+            src={`https://media.giphy.com/media/${currentMeme.id}/giphy.gif`}
+            alt="Thank you"
+            className="w-full max-w-[300px] rounded-2xl"
+          />
+          <p className="text-white text-[20px] font-bold mt-5 text-center">{currentMeme.caption}</p>
+          <p className="text-text-muted text-[12px] mt-8">Tap anywhere to close</p>
+        </div>
+      )}
 
-      {/* Header */}
-      <div className="mb-6">
-        <p className="text-[11px] tracking-[2px] uppercase text-text-muted mb-1">Kongsi Bill</p>
-        <h1 className="text-[26px] font-bold text-text-primary leading-tight">{billData.billName}</h1>
-        <p className="text-text-secondary text-[14px] mt-1">
-          Pilih lah makan apa tadi
-        </p>
-      </div>
+      <div className="mx-auto max-w-[430px]">
 
-      {/* Items */}
-      <div className="bg-surface border border-border rounded-2xl p-6 mb-4">
-        <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-4">What did you have?</p>
-        <div>
-          {billData.items.map((item, idx) => {
-            const selected = selectedItems.has(idx)
-            return (
-              <button
-                key={idx}
-                onClick={() => toggleItem(idx)}
-                className="w-full flex items-center justify-between py-3 border-b border-border last:border-b-0 cursor-pointer select-none active:opacity-70 transition-opacity text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-[22px] h-[22px] rounded-[6px] border-2 flex items-center justify-center shrink-0 transition-all ${
-                      selected ? 'bg-accent border-accent' : 'bg-transparent border-border'
-                    }`}
-                  >
-                    {selected && (
-                      <span className="text-text-on-accent text-[13px] font-bold leading-none">✓</span>
-                    )}
-                  </div>
-                  <span className={`text-[15px] ${selected ? 'text-text-primary font-medium' : 'text-text-secondary'}`}>
-                    {item.name}
-                  </span>
+        {/* Header */}
+        <div className="mb-6">
+          <p className="text-[11px] tracking-[2px] uppercase text-text-muted mb-1">Kongsi Bill</p>
+          <h1 className="text-[26px] font-bold text-text-primary leading-tight">{billData.billName}</h1>
+          <p className="text-text-secondary text-[14px] mt-1">Pilih lah makan apa tadi</p>
+        </div>
+
+        {/* View Receipt */}
+        {billData.receiptUrl && (
+          <a
+            href={billData.receiptUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full border border-border rounded-2xl py-3 text-text-secondary text-[14px] hover:border-accent hover:text-accent transition-colors mb-4"
+          >
+            View Receipt ↗
+          </a>
+        )}
+
+        {/* Items */}
+        <div className="bg-surface border border-border rounded-2xl p-6 mb-4">
+          <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-4">What did you have?</p>
+          <div className="divide-y divide-border">
+            {billData.items.map((item, idx) => {
+              const qty = selectedItems.get(idx) ?? 0
+              const isSelected = qty > 0
+              return (
+                <div key={idx} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                  {isSelected ? (
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[15px] text-text-primary font-medium">{item.name}</p>
+                      <p className="text-[13px] text-text-muted mt-0.5">RM {fmt(item.price)} / portion</p>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => adjustQty(idx, 1)}
+                      className="flex-1 text-left min-w-0 opacity-75 active:opacity-50 transition-opacity"
+                    >
+                      <p className="text-[15px] text-text-secondary">{item.name}</p>
+                      <p className="text-[13px] text-text-muted mt-0.5">RM {fmt(item.price)}</p>
+                    </button>
+                  )}
+
+                  {isSelected ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => adjustQty(idx, qty - 1)}
+                        className={`${stepperBtn} border-accent/70 text-text-secondary hover:border-accent`}
+                      >
+                        −
+                      </button>
+                      <span className="text-text-primary font-semibold text-[16px] w-5 text-center tabular-nums select-none">
+                        {qty}
+                      </span>
+                      <button
+                        onClick={() => adjustQty(idx, qty + 1)}
+                        className={`${stepperBtn} border-accent bg-accent text-text-on-accent`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => adjustQty(idx, 1)}
+                      className={`${stepperBtn} border-border text-text-muted hover:border-accent hover:text-accent`}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
-                <span className="text-[15px] font-semibold text-text-primary shrink-0 ml-2">
-                  RM {fmt(item.price)}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Total */}
-      <div
-        className="rounded-2xl p-6 mb-4"
-        style={{ background: 'linear-gradient(135deg, #00d094 0%, #0086ff 100%)' }}
-      >
-        <p className="text-[12px] tracking-[1.5px] uppercase text-white/70 mb-2">Your total</p>
-        <p className="text-[42px] font-extrabold tracking-tight text-white mb-3 leading-none tabular-nums">
-          <span className="text-[20px] font-normal opacity-80 mr-1">RM</span>
-          {fmt(animatedTotal)}
-        </p>
-        <div className="space-y-1">
-          <div className="flex justify-between text-[13px] text-white/70">
-            <span>Items subtotal</span>
-            <span className="tabular-nums">RM {fmt(animatedSubtotal)}</span>
+              )
+            })}
           </div>
-          {billData.serviceChargeRate > 0 && (
+        </div>
+
+        {/* Total */}
+        <div
+          className="rounded-2xl p-6 mb-4"
+          style={{ background: 'linear-gradient(135deg, #00d094 0%, #0086ff 100%)' }}
+        >
+          <p className="text-[12px] tracking-[1.5px] uppercase text-white/70 mb-2">Your total</p>
+          <p className="text-[42px] font-extrabold tracking-tight text-white mb-3 leading-none tabular-nums">
+            <span className="text-[20px] font-normal opacity-80 mr-1">RM</span>
+            {fmt(animatedTotal)}
+          </p>
+          <div className="space-y-1">
             <div className="flex justify-between text-[13px] text-white/70">
-              <span>Service charge ({billData.serviceChargeRate}%)</span>
-              <span className="tabular-nums">RM {fmt(animatedSC)}</span>
+              <span>Items subtotal</span>
+              <span className="tabular-nums">RM {fmt(animatedSubtotal)}</span>
             </div>
-          )}
-          {billData.sstRate > 0 && (
-            <div className="flex justify-between text-[13px] text-white/70">
-              <span>SST ({billData.sstRate}%)</span>
-              <span className="tabular-nums">RM {fmt(animatedSST)}</span>
-            </div>
+            {billData.serviceChargeRate > 0 && (
+              <div className="flex justify-between text-[13px] text-white/70">
+                <span>Service charge ({billData.serviceChargeRate}%)</span>
+                <span className="tabular-nums">RM {fmt(animatedSC)}</span>
+              </div>
+            )}
+            {billData.sstRate > 0 && (
+              <div className="flex justify-between text-[13px] text-white/70">
+                <span>SST ({billData.sstRate}%)</span>
+                <span className="tabular-nums">RM {fmt(animatedSST)}</span>
+              </div>
+            )}
+          </div>
+          {selectedItems.size === 0 && (
+            <p className="text-white/50 text-[12px] mt-3">Tap items above to see your total</p>
           )}
         </div>
-        {selectedItems.size === 0 && (
-          <p className="text-white/50 text-[12px] mt-3">← Tap your items above to see your total</p>
-        )}
-      </div>
 
-      {/* Pay card */}
-      <div className="bg-surface border border-border rounded-2xl p-5 text-center mb-4">
-        {billData.qrCode ? (
-          <>
-            <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-3">
-              Pay {billData.payerName}
-            </p>
-            <img
-              src={billData.qrCode}
-              alt={`${billData.payerName}'s payment QR`}
-              className="w-[200px] h-[200px] object-contain mx-auto rounded-xl bg-white p-2 mb-3"
-            />
-            <p className="text-text-secondary text-[13px]">
-              Screenshot this QR and pay via DuitNow · TNG · Any bank
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-text-secondary text-[13px]">Scan {billData.payerName}&apos;s QR code to pay</p>
-            <p className="text-text-primary font-semibold text-[16px] mt-1">{billData.payerName}</p>
-            <p className="text-text-muted text-[11px] mt-1">DuitNow · Touch &apos;n Go · Any Malaysian bank</p>
-          </>
-        )}
-      </div>
+        {/* Pay card */}
+        <div className="bg-surface border border-border rounded-2xl p-5 text-center mb-4">
+          {billData.qrCode ? (
+            <>
+              <p className="text-[11px] tracking-[1.5px] uppercase text-text-muted mb-3">
+                Pay {billData.payerName}
+              </p>
+              <img
+                src={billData.qrCode}
+                alt={`${billData.payerName}'s payment QR`}
+                className="w-[200px] h-[200px] object-contain mx-auto rounded-xl bg-white p-2 mb-3"
+              />
+              <p className="text-text-secondary text-[13px]">
+                Screenshot this QR and pay via DuitNow · TNG · Any bank
+              </p>
+              <button
+                onClick={downloadQR}
+                className="mt-3 w-full border border-border rounded-xl py-2.5 text-text-secondary text-[13px] font-medium hover:border-accent hover:text-accent transition-colors"
+              >
+                Save QR to Photos
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-text-secondary text-[13px]">Scan {billData.payerName}&apos;s QR code to pay</p>
+              <p className="text-text-primary font-semibold text-[16px] mt-1">{billData.payerName}</p>
+              <p className="text-text-muted text-[11px] mt-1">DuitNow · Touch &apos;n Go · Any Malaysian bank</p>
+            </>
+          )}
+        </div>
 
-      <p className="text-center text-text-muted text-[12px] pb-8">
-        Each person selects their own items independently.
-      </p>
-    </div>
+        {/* Dah bayar */}
+        <button
+          onClick={handleDahBayar}
+          className="w-full bg-accent text-text-on-accent font-bold rounded-2xl py-4 text-[17px] mb-4 active:opacity-80 transition-opacity"
+        >
+          Dah bayar 🤙
+        </button>
+
+        <p className="text-center text-text-muted text-[12px] pb-8">
+          Each person selects their own items independently.
+        </p>
+      </div>
+    </>
   )
 }
 
