@@ -160,14 +160,23 @@ function SplitPageContent() {
     try {
       const res = await fetch(billData.qrCode)
       const blob = await res.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objectUrl
-      a.download = `${billData.payerName}-QR.jpg`
-      a.click()
-      URL.revokeObjectURL(objectUrl)
-    } catch {
-      window.open(billData.qrCode, '_blank')
+      const fileName = `${billData.payerName}-QR.jpg`
+      const file = new File([blob], fileName, { type: blob.type || 'image/jpeg' })
+
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: fileName })
+      } else {
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = fileName
+        a.click()
+        URL.revokeObjectURL(objectUrl)
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        window.open(billData.qrCode, '_blank')
+      }
     }
   }
 
